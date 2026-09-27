@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "personavault-mcp"
 version = "0.1.0"
-description = "Host-neutral MCP adapter skeleton for PersonaVault. Slice 1: skeleton + capability-boundary tests only — no functional MCP tools yet."
+description = "Host-neutral MCP adapter for PersonaVault. Slice 2: one read-only tool, get_boot_context, registered — no transport, no auth, no second tool yet."
 requires-python = ">=3.11"
 dependencies = []
 

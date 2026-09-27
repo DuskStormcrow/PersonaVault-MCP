@@ -35,14 +35,24 @@ class AdapterConfig:
     bind_port: int = 8765
     auth_token_env_var: str = "PERSONAVAULT_MCP_AUTH_TOKEN"
 
+    # Deliberately distinct from vault_root: this is where PersonaVault's
+    # *source code* (a checkout of the PersonaVault repo) lives, so it can
+    # be added to sys.path (see personavault_bridge.py). vault_root is
+    # where a persona *Library's data* (Active/Archive/Exports/AppConfig)
+    # lives. Confusing the two would mean pointing the importable-package
+    # lookup at someone's persona data, or vice versa.
+    personavault_source_path: Path | None = None
+
     @classmethod
     def from_env(cls) -> "AdapterConfig":
         """Read config from environment variables only. No file parsing,
         no PersonaVault access, no network calls — safe to call at import
         time or in a test."""
         vault_root_str = os.environ.get("PERSONAVAULT_MCP_VAULT_ROOT")
+        source_path_str = os.environ.get("PERSONAVAULT_MCP_SOURCE_PATH")
         return cls(
             vault_root=Path(vault_root_str) if vault_root_str else None,
             bind_host=os.environ.get("PERSONAVAULT_MCP_BIND_HOST", "127.0.0.1"),
             bind_port=int(os.environ.get("PERSONAVAULT_MCP_BIND_PORT", "8765")),
+            personavault_source_path=Path(source_path_str) if source_path_str else None,
         )

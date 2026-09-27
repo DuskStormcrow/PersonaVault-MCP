@@ -230,11 +230,64 @@ against this corrected contract with the following properties:
 
 ---
 
+## Slice 2 notes
+
+Slice 2 (`get_boot_context`, the adapter's first functional tool) was
+implemented against this contract with the following properties and one
+discovered constraint:
+
+- **PersonaVault has no packaging metadata.** Checked directly:
+  `pip install -e <PersonaVault checkout>` fails with "does not appear to
+  be a Python project" — there is no `setup.py`/`pyproject.toml`/
+  `setup.cfg` at PersonaVault Core's root. This is not "genuinely
+  impossible without a Core change" (a Core-free alternative exists), so
+  Slice 2 did not stop and ask — it used a filesystem-path bridge
+  (`personavault_bridge.py`) instead: PersonaVault's checkout is added to
+  `sys.path` at call time, pinned to a recorded commit
+  (`f9712aceda1912c6e5913bb4b29fc28ed4408933`), never vendored. No pip
+  dependency on `personavault` was added anywhere in this repo.
+  Recommendation, not performed: PersonaVault Core adding standard
+  packaging metadata would let a future slice replace this bridge with an
+  ordinary pinned dependency — that is a separate, future, reviewed Core
+  change.
+- **PersonaVault coupling is confined to one file.** Only
+  `personavault_bridge.py` imports `personavault`; `tools/get_boot_context.py`
+  goes through the bridge's own functions, not a direct import. Proven by
+  test (`test_personavault_import_confined_to_approved_modules`).
+- **Output is allowlisted, not passed through.** `get_boot_context`
+  constructs its own output dict field-by-field from
+  `boot_package_preview()`'s allowed fields; the six known private fields
+  (`corelog_status`, `asset_status`, `checksum_status`, `state_status`,
+  `origin`, `preview_text`) are verified absent from the tool's output by
+  test, cross-checked against the real underlying call to confirm they
+  do exist on the source side and are being deliberately dropped.
+  All ten allowed field names were verified against the real
+  `boot_package_preview()` return dict with zero renaming needed — no
+  field-name mapping was required.
+- **The 5-event limit is inherited, not hardcoded.** The tool truncates
+  to whatever `approved_continuity_limit` PersonaVault itself reports,
+  rather than hardcoding `5` independently — if
+  `APPROVED_CONTINUITY_PREVIEW_LIMIT` changes in PersonaVault Core, this
+  tool's behavior updates automatically with it.
+- **Not registered on import.** `import personavault_mcp` still performs
+  no side effects; `personavault_mcp.bootstrap.register_default_tools()`
+  must be called explicitly, and registers exactly one tool.
+
+Nothing discovered in Slice 2 weakens the contract or changes the
+planned Slice 3 (`propose_session_note`) design — the packaging-metadata
+gap is a mild inconvenience worked around cleanly, not a structural
+problem. It does mean Slice 3's own dependency section should note the
+same bridge mechanism rather than assume a pip dependency will exist by
+then.
+
 ## Changelog
 
 - **v0.1 (original)** — approved with two corrections requested.
-- **v0.1 (this revision)** — Correction 1 (import discipline is not a
+- **v0.1 (revision 1)** — Correction 1 (import discipline is not a
   process sandbox) applied to §1 and §3. Correction 2 (`host_conversation_id`
   as its own field, not an overload of `host_model`) applied to §2 and
   §4, with the required PersonaVault Core schema change flagged as a
   pre-requisite for the provenance-wiring slice, not folded into Slice 1.
+- **v0.1 (revision 2, Slice 2)** — added Slice 2 notes above: PersonaVault
+  packaging-metadata gap and the filesystem-path bridge adopted to work
+  around it without a Core change.

@@ -1,4 +1,5 @@
-"""Slice 1 capability-boundary tests.
+"""Capability-boundary tests, introduced in Slice 1 and extended in
+Slice 2.
 
 These are architecture/governance tests: they prove the adapter's own
 source and declared dependencies do not reference PersonaVault
@@ -7,12 +8,19 @@ autonomous behavior or host-specific terminology.
 
 They do NOT prove that a fully compromised adapter process is incapable
 of reaching those capabilities by other means (e.g. dynamically
-importing ``personavault`` at runtime if it happens to be installed in
-the same environment). See docs/ARCHITECTURE_CONTRACT_V0_1.md,
-Correction 1, for why that distinction matters and what stronger
-isolation would require. Slice 1 also carries no dependency on
-``personavault`` at all, so at this stage the distinction is moot in
-practice — there is nothing installed to reach.
+importing ``personavault`` at runtime, which is possible starting Slice
+2, since a real PersonaVault checkout is now importable in this
+process). See docs/ARCHITECTURE_CONTRACT_V0_1.md, Correction 1, for why
+that distinction matters and what stronger isolation would require.
+
+Slice-2 note: `test_no_personavault_import_anywhere` (Slice 1) has been
+replaced by `test_personavault_import_confined_to_approved_modules`
+below. Slice 1's version asserted zero PersonaVault coupling anywhere,
+which was correct for Slice 1 but is no longer true by design now that
+get_boot_context exists — this was anticipated and documented in Slice
+1's own contract notes ("that coupling starts in the slice that
+implements get_boot_context, not this one"). Every other test in this
+file is unchanged from Slice 1 and still passes unmodified.
 """
 
 from __future__ import annotations
@@ -86,20 +94,43 @@ def test_denied_identifier_absent_from_source(token: str) -> None:
     )
 
 
-def test_no_personavault_import_anywhere() -> None:
-    """Slice 1 has zero functional coupling to PersonaVault — no tool
-    imports it, so none of the denied capabilities above are reachable
-    even in principle through this package's own code paths (though see
-    the module docstring: this is not a claim about process isolation)."""
+# Modules explicitly permitted to import personavault, and required to.
+# Adding a module to this set is a design decision (which tool needs
+# PersonaVault access), not something to do casually to silence a test.
+# Note: tools/get_boot_context.py deliberately does NOT import
+# personavault directly -- it goes through personavault_bridge, which is
+# the only file that ever does. Keeping this to one file, rather than
+# one per tool, is a smaller reviewed surface, not a coincidence.
+_MODULES_ALLOWED_TO_IMPORT_PERSONAVAULT = {
+    "personavault_bridge.py",
+}
+
+
+def test_personavault_import_confined_to_approved_modules() -> None:
+    """Every module in the package is checked individually: modules on
+    the allowlist above MUST import personavault (proving the allowlist
+    itself stays accurate, not just permissive), and every other module
+    MUST NOT — proving PersonaVault coupling stays confined to the
+    reviewed surface rather than spreading through the package."""
     forbidden_import_patterns = [
         r"\bimport\s+personavault\b",
         r"\bfrom\s+personavault\b",
     ]
-    for pattern in forbidden_import_patterns:
-        assert not re.search(pattern, SOURCE_TEXT), (
-            "personavault must not be imported anywhere in Slice 1 — no "
-            "functional tool exists yet that needs it."
-        )
+    for path in sorted(SRC_ROOT.rglob("*.py")):
+        relative = path.relative_to(SRC_ROOT).as_posix()
+        text = path.read_text(encoding="utf-8")
+        has_import = any(re.search(pattern, text) for pattern in forbidden_import_patterns)
+        if relative in _MODULES_ALLOWED_TO_IMPORT_PERSONAVAULT:
+            assert has_import, (
+                f"{relative} is on the PersonaVault-import allowlist but does not "
+                "actually import personavault — the allowlist is stale."
+            )
+        else:
+            assert not has_import, (
+                f"{relative} imports personavault but is not on the approved "
+                "allowlist — PersonaVault coupling must stay confined to "
+                "reviewed modules."
+            )
 
 
 # Item 5: no arbitrary filesystem path accepted from a host-facing
