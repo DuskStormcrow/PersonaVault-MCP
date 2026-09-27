@@ -1,27 +1,42 @@
 """A non-canonical, in-process cache correlating a host's own conversation
 identity with a PersonaVault Session Return ``session_id``.
 
-This exists because PersonaVault Core currently has no durable, queryable
-field recording "which host conversation does this returned session
-belong to" (see the Slice 3 report for the precise, NOT-YET-IMPLEMENTED
-proposed additive schema change that would add one). Until/unless that
-change is made, reusing the same PersonaVault session across multiple
-proposals from the same host conversation is only possible within a
-single adapter process's lifetime -- this cache is exactly that, no more.
+Status as of Slice 4 (PersonaVault Core commit
+d8b9762cf3371572383b72336cd1ad23f91f8dea): the underlying *provenance*
+gap this cache originally stood in for is closed -- PersonaVault now
+durably stores ``host_conversation_id`` on the session record itself, so
+which host conversation produced a given session is readable back from
+PersonaVault alone, indefinitely, surviving any adapter restart.
+
+What is NOT closed, and is the reason this cache still exists: PersonaVault
+has no public method to *look up* a session by persona, host, or
+host_conversation_id -- only to create one, or to act on one whose
+session_id is already known. Verified directly against ``Vault`` (every
+public method was enumerated): ``create_returned_session`` (write),
+``save_session_intake`` (write, requires an already-known session_id),
+``commit_session_intake`` (write), ``correct_session_intake_candidate``
+(write). The one read method that exists, ``_load_session_record``, is
+private, and this project's own rule is not to reach into private
+PersonaVault methods merely to avoid a cache. So: durable provenance is
+now real; durable *correlation* is not yet possible without a new,
+small, public Core query method -- proposed but not implemented (see the
+Slice 4 report) -- and this cache remains, by verified necessity, to
+provide it for the lifetime of one adapter process.
 
 Explicitly NOT canonical:
 - it is never written to disk;
 - it is lost on adapter restart or crash;
-- PersonaVault itself has no way to rediscover this mapping without it,
-  which is a disclosed limitation of proceeding without the Core change,
-  not a hidden one.
+- without a future Core lookup method, PersonaVault has no way to
+  rediscover this specific mapping on its own.
 
 A cache miss (including after a restart) simply causes the next proposal
 for what a host considers "the same conversation" to open a new
 PersonaVault session via ``create_returned_session`` -- safe, if slightly
 wasteful (the earlier session becomes an orphan with no intake attached,
 which is itself a legitimate, inspectable, recoverable state, not
-corruption).
+corruption). Every prior session and its proposals remain fully intact
+and durably provenanced on disk regardless -- only the *correlation* to
+a newly-restarted adapter process is lost, never the underlying data.
 """
 
 from __future__ import annotations

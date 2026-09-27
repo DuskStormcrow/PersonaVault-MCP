@@ -373,6 +373,62 @@ authentication boundary — they are refinements to the provenance and
 session-mapping sections (§2, §4) and one new, narrowly-scoped shared
 module (`persona_name_guard.py`), not a change in kind.
 
+## Slice 4 notes
+
+Slice 4 (provenance hardening) consumed the PersonaVault Core Maintenance
+Gate (Core commit `d8b9762cf3371572383b72336cd1ad23f91f8dea`) and closed
+one of the two limitations Slice 3 disclosed, while confirming the other
+remains genuinely open.
+
+**Durable provenance — now real.** `propose_session_note` now calls
+`create_returned_session` with `host_platform=host_id`,
+`host_conversation_id=host_conversation_id`, and
+`source="mcp_proposal"`. All three are native PersonaVault fields as of
+the Maintenance Gate — none repurposed, none invented. Which host, which
+host conversation, and that a session came via MCP (rather than manual
+desktop entry, which keeps PersonaVault's own default,
+`"manual_user_entry"`, completely unaffected) are now readable back from
+PersonaVault alone, indefinitely, with no dependency on the adapter's
+own memory. `mcp_proposal` was chosen to match the `source` field's own
+existing precedent (a single snake_case value, `"manual_user_entry"`) —
+checked against every other "source"/"created_by" value already in
+PersonaVault (retirement, corelog, portrait-library code all use a
+different, phrase-style convention for unrelated fields), and none of
+them is a better fit for this specific field.
+
+**Durable correlation — still open, verified not just assumed.**
+Every public method on `Vault` was enumerated: `create_returned_session`,
+`save_session_intake`, `commit_session_intake`, and
+`correct_session_intake_candidate` are the only public Session Return
+methods, and all four are write-shaped or require an already-known
+`session_id`. There is no public method to list or search returned
+sessions by persona, host, or `host_conversation_id` — the one read
+method (`Vault._load_session_record`) is private, and this project's own
+rule is not to reach into private methods merely to avoid a cache. The
+adapter's in-process `SessionCorrelationCache` therefore remains, by
+verified necessity. Its consequence is now much smaller than before this
+slice: only the *correlation* is lost on adapter restart, never the
+underlying data — a repeated host conversation after a restart opens a
+second, independent, but equally durable and correctly-provenanced
+session, rather than resuming the first. Both sessions remain fully
+inspectable by a human reviewing PersonaVault directly.
+
+**Recommended, not implemented**: a small, additive, read-only public
+method — something in the shape of `Vault.list_returned_sessions(name_or_folder,
+status="active") -> list[dict]`, reading `Chronicle/sessions/*.json` for
+one persona — would let a future slice close the correlation gap too,
+by searching for an existing session whose `host_platform`/
+`host_conversation_id` match before creating a new one. This is a
+PersonaVault Core change and was not made in this slice; it is a
+candidate for a future, separately reviewed maintenance pass, not an
+urgent blocker (the current behavior is safe, just occasionally
+duplicative).
+
+No governance boundary changed: `commit_session_intake` remains
+unimported, no input field can produce an approval, and every
+`get_boot_context` guarantee is untouched (that file was not modified
+this slice). Tool count remains exactly two.
+
 ## Changelog
 
 - **v0.1 (original)** — approved with two corrections requested.
@@ -391,3 +447,12 @@ module (`persona_name_guard.py`), not a change in kind.
   `create_returned_session`), and a documented PersonaVault Core
   absolute-path finding in `_resolve_persona_dir`, worked around in
   `persona_name_guard.py` for both tools.
+- **v0.1 (revision 4, Slice 4)** — both Slice 3 Core proposals were
+  implemented in a separate PersonaVault Core Maintenance Gate
+  (`d8b9762cf3371572383b72336cd1ad23f91f8dea`) and are now used by
+  `propose_session_note`: durable `host_conversation_id` and a real
+  `source="mcp_proposal"`. Durable provenance is resolved; durable
+  correlation remains open (verified no public Core lookup API exists)
+  and is recommended, not implemented, as a small future read-only
+  method. The absolute-path finding is fixed at the Core level too;
+  `persona_name_guard.py` remains as intentional defense-in-depth.

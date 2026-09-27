@@ -398,22 +398,30 @@ def test_adapter_failure_does_not_create_canonical_continuity(vault_with_persona
 
 # --- documented PersonaVault Core finding (not a bug in this adapter) ------
 
-def test_personavault_core_resolve_persona_dir_absolute_path_finding(vault_factory) -> None:
-    """Direct evidence for the finding in persona_name_guard.py, called
-    against real PersonaVault Core with NO adapter guard in the way --
-    proves this is a PersonaVault Core behavior this adapter works
-    around, not a claim taken on faith. Only run if /etc/passwd exists
-    on the host (true for any ordinary Linux CI/dev box); harmless and
-    read-only either way -- PersonaVault only ever attempts to read
-    /etc/passwd/persona.yaml, which does not exist, so nothing is
-    disclosed or written."""
+def test_personavault_core_resolve_persona_dir_absolute_path_is_now_fixed(vault_factory) -> None:
+    """Direct evidence against real PersonaVault Core with NO adapter
+    guard in the way. Updated for the PersonaVault Core Maintenance Gate
+    (Core commit d8b9762cf3371572383b72336cd1ad23f91f8dea):
+    Vault._resolve_persona_dir now confines the direct-lookup join to
+    the intended status directory itself, so this input cleanly raises
+    FileNotFoundError -- the ordinary "not found" path -- instead of the
+    uncaught NotADirectoryError this same test caught before that fix.
+    persona_name_guard.py's own rejection remains in place as
+    intentional defense-in-depth (it still returns MALFORMED_REQUEST
+    before PersonaVault is even called, per
+    test_path_like_persona_value_is_rejected_before_reaching_personavault),
+    but Core itself no longer requires it to stay safe. Only run if
+    /etc/passwd exists on the host (true for any ordinary Linux CI/dev
+    box); harmless and read-only either way -- PersonaVault only ever
+    attempts to read /etc/passwd/persona.yaml, which does not exist, so
+    nothing is disclosed or written."""
     import pathlib
 
     if not pathlib.Path("/etc/passwd").is_file():
         pytest.skip("/etc/passwd not present on this host; finding not exercisable here.")
 
     vault, _config = vault_factory()
-    with pytest.raises(NotADirectoryError):
+    with pytest.raises(FileNotFoundError):
         vault.create_returned_session("/etc/passwd", host_platform="direct-core-test")
 
 

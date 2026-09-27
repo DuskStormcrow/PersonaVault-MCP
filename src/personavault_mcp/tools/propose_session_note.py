@@ -35,6 +35,38 @@ session:intake relationship -- a session can legitimately have many
 intakes, each independently reviewable. This is not a workaround; it is
 the one mapping the real public API supports without risking data loss
 or reaching into private methods.
+
+Provenance (Slice 4)
+---------------------
+As of the PersonaVault Core Maintenance Gate
+(commit d8b9762cf3371572383b72336cd1ad23f91f8dea), ``create_returned_session``
+accepts real ``host_conversation_id`` and ``source`` parameters instead
+of silently dropping the former and hardcoding the latter. This tool now
+passes both, so the session record durably identifies which host, which
+host conversation, and that it came via MCP rather than manual desktop
+entry -- all readable back from PersonaVault itself, surviving an
+adapter restart, with no adapter-side cache required to reconstruct it.
+
+What still does NOT survive an adapter restart: the *correlation*
+between a host conversation and its session_id (`session_correlation.py`).
+Verified directly against the real Core (grepped every public method on
+``Vault``): there is no public method to list or search returned
+sessions by persona, host, or host_conversation_id -- only
+``create_returned_session`` (write), ``save_session_intake`` (write,
+requires an already-known session_id), ``commit_session_intake``
+(write), and ``correct_session_intake_candidate`` (write). The read
+side (``Vault._load_session_record``) is private. Rediscovering "was
+there already an open session for this host conversation" without the
+adapter's own in-memory cache would require either a new public Core
+query method (not added in this slice -- see the Slice 4 report) or
+reaching into a private method (explicitly against this project's own
+rule). So: the correlation cache remains for this slice, by verified
+necessity, not preference. A repeated host conversation after an
+adapter restart opens a second, independent PersonaVault session rather
+than continuing the first -- a known adapter limitation, not data loss:
+every prior session and its proposals remain fully intact and durably
+provenanced on disk, just not automatically re-linked to a
+newly-restarted adapter process.
 """
 
 from __future__ import annotations
@@ -52,6 +84,19 @@ from ..schema_guard import assert_schema_is_safe
 from ..session_correlation import SessionCorrelationCache
 
 TOOL_NAME = "propose_session_note"
+
+# The value stored in PersonaVault's own `source` field (session_return.v0.1)
+# for every session this tool creates -- distinguishing MCP-originated
+# sessions from PersonaVault's own default, "manual_user_entry", which
+# stays the default for every other caller (the desktop UI, scripts,
+# etc.). Host-neutral by construction: it names the protocol (MCP), not
+# any specific host or vendor. Checked against every other "source"-like
+# value already in personavault/storage.py (created_by/source across
+# retirement, corelog, and portrait-library code) -- none of those are
+# this exact field's own precedent, which before this slice had exactly
+# one value ("manual_user_entry"); "mcp_proposal" matches that value's
+# own snake_case, single-token shape.
+MCP_SESSION_SOURCE = "mcp_proposal"
 
 # Verified verbatim against personavault/storage.py's own
 # SESSION_CANDIDATE_CATEGORIES (commit f9712aceda1912c6e5913bb4b29fc28ed4408933)
@@ -219,6 +264,8 @@ def _get_or_create_session(vault, persona: str, host_id: str, host_conversation_
         session = vault.create_returned_session(
             persona,
             host_platform=host_id,
+            host_conversation_id=host_conversation_id,
+            source=MCP_SESSION_SOURCE,
             summary="Session opened by an MCP host proposal.",
         )
     except FileNotFoundError as exc:
