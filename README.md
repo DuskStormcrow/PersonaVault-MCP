@@ -6,21 +6,29 @@ ever used here as an imported dependency (once a later slice actually needs
 it) — this repository never modifies PersonaVault Core, and PersonaVault
 Core never depends on this repository.
 
-## Current status: Slice 2 — one functional tool, `get_boot_context`
+## Current status: Slice 3 — two functional tools
 
 As of this slice:
 
-- Exactly one functional MCP tool exists: `get_boot_context`, a read-only,
-  bounded projection of `Vault.boot_package_preview()`. It is not
-  auto-registered on import — call
+- Two functional MCP tools exist: `get_boot_context` (read-only, Slice 2)
+  and `propose_session_note` (write-adjacent, proposal-only, Slice 3).
+  Neither is auto-registered on import — call
   `personavault_mcp.bootstrap.register_default_tools()` explicitly.
-- `propose_session_note` remains a reserved name only, in
-  `personavault_mcp.registry.APPROVED_TOOL_NAMES` — no handler exists.
+- `propose_session_note` wraps PersonaVault's existing Session Return
+  intake path (`create_returned_session` → `save_session_intake`). It
+  never calls `commit_session_intake` and cannot produce an "approve"
+  decision — every candidate lands as `defer` (or natively
+  `session_only` for that one category), pending human review inside
+  PersonaVault.
 - PersonaVault is referenced via a filesystem-path bridge
   (`personavault_bridge.py`), not a pip dependency — PersonaVault Core has
-  no packaging metadata to install against. See that module's docstring
-  for why, and the Slice 2 report for the discovered constraint this
-  reflects.
+  no packaging metadata to install against.
+- `persona_name_guard.py` rejects any path-shaped `persona` input before
+  PersonaVault ever sees it — a real PersonaVault Core issue found during
+  Slice 3 (see the Slice 3 report and that module's docstring).
+- Two small, additive PersonaVault Core changes are recommended but
+  **not implemented** — see `docs/ARCHITECTURE_CONTRACT_V0_1.md`'s
+  Slice 3 notes for the precise proposals, pending separate review.
 - Still no networking, no transport, no authentication beyond what Slice 1
   established, and no demo/simulator client in this repository.
 

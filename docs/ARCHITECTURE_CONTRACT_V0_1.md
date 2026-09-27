@@ -280,6 +280,99 @@ problem. It does mean Slice 3's own dependency section should note the
 same bridge mechanism rather than assume a pip dependency will exist by
 then.
 
+## Slice 3 notes
+
+Slice 3 (`propose_session_note`, the adapter's first write-adjacent
+tool) was implemented against this contract. It surfaced two genuine
+PersonaVault Core findings and confirmed one design refinement; none of
+them were addressed by modifying Core, and none weaken the boundary this
+contract exists to protect.
+
+**Session/intake mapping, verified against the real API (not assumed):**
+`Vault._write_intake_record` overwrites its target file wholesale, and
+the only read-back method (`Vault._load_intake_record`) is private.
+Calling `save_session_intake` twice with the same `intake_id` but only a
+new candidate would silently discard whatever was previously proposed
+and unreviewed. The safe mapping actually implemented: **one host
+conversation → one PersonaVault session** (created once via
+`create_returned_session`, reused via an in-process correlation cache),
+and **each individual proposal call → its own new intake** (a fresh
+PersonaVault-generated `intake_id`, one candidate), all sharing that
+session_id. PersonaVault's schema never required a 1:1 session:intake
+relationship; this is the one mapping the public API supports without
+risking data loss or reaching into private methods — not a workaround.
+
+**Verified duplicate behavior:** PersonaVault's own duplicate protection
+(`Vault._committed_candidate_keys`) is scoped to `(event_type,
+intake_id, candidate_id)` at **commit** time only. Since this tool never
+commits and always creates a fresh `intake_id` per proposal,
+**repeated identical proposals are not deduplicated** — each becomes an
+independent, separately reviewable pending candidate. This is disclosed,
+tested behavior, not an oversight; per the slice's own instruction,
+no separate dedup database was invented to paper over it.
+
+**Two additive PersonaVault Core changes are recommended, NOT
+implemented — for separate Stormcrow/Nyx review before any future slice
+depends on them:**
+
+1. **Add `host_conversation_id` to `session_return.v0.1`.** Checked
+   against every existing session-record field
+   (`host_platform`, `host_model`, `source_artifact`, `notes`, `source`):
+   none is semantically correct for "which host conversation this came
+   from" (this is exactly the mistake Correction 2 already flagged once;
+   it was not repeated here). Proposed: a new optional field,
+   `host_conversation_id: str = ""`, plus accepting it as an optional
+   keyword argument on `create_returned_session`. Additive, backward
+   compatible, no existing record needs to change.
+2. **Make `source` an accepted parameter on `create_returned_session`.**
+   Currently hardcoded inside the method to the literal string
+   `"manual_user_entry"` regardless of caller — there is no way to pass
+   a different value today. Proposed: `source: str = "manual_user_entry"`
+   as a real keyword argument, so a future slice could pass
+   `source="mcp_proposal"` and make MCP-originated sessions distinguishable
+   from manual ones by a validated field rather than by convention alone.
+
+**Until either change is made:** `propose_session_note` uses
+`host_platform` for `host_id` (a correct, pre-existing fit — not an
+overload) and leaves `host_conversation_id` living only in the adapter's
+own in-process, non-canonical cache (`session_correlation.py`). Honestly
+disclosed consequence: **after an adapter restart, PersonaVault has no
+way to rediscover which existing session a given host conversation
+belongs to** — the next proposal for what a host considers "the same
+conversation" opens a new session, and the earlier one becomes an
+orphan (a session record with no intake ever attached) — itself a
+legitimate, human-inspectable state, not corruption, but a real,
+disclosed limitation of proceeding without the Core change.
+
+**A separate, real PersonaVault Core issue was found and worked around
+at the adapter's door (not fixed in Core):** `Vault._resolve_persona_dir`
+joins `name_or_folder` onto its base directory with plain
+`Path.__truediv__`. Pathlib's own join semantics treat an absolute
+`name_or_folder` as a full replacement, not an append — so
+`persona="/etc/passwd"` resolved to the real file `/etc/passwd` on the
+host running the tests. `load_persona` happens to fail safely (a
+pre-existing `.exists()` check swallows the resulting `OSError`);
+`create_returned_session` does not (it raised an uncaught
+`NotADirectoryError` from inside PersonaVault Core, verified directly in
+`tests/test_propose_session_note.py::test_personavault_core_resolve_persona_dir_absolute_path_finding`).
+Both `get_boot_context` and `propose_session_note` now reject any
+path-shaped `persona` input at the door
+(`persona_name_guard.py`), before PersonaVault ever sees it — this
+counted as a "genuine shared infrastructure defect," which Slice 3's own
+authorization explicitly permitted fixing even though it touches Slice
+2's file. **Proposed, not-yet-implemented Core fix:** have
+`_resolve_persona_dir` reject an absolute `name_or_folder` outright
+(e.g. `if Path(name_or_folder).is_absolute(): raise
+FileNotFoundError(...)`), which would close this at the source for every
+current and future caller, not just the two tools this adapter happens
+to expose.
+
+None of the above requires revising the sections of this contract
+concerning the deny-by-design capability list, the transport, or the
+authentication boundary — they are refinements to the provenance and
+session-mapping sections (§2, §4) and one new, narrowly-scoped shared
+module (`persona_name_guard.py`), not a change in kind.
+
 ## Changelog
 
 - **v0.1 (original)** — approved with two corrections requested.
@@ -291,3 +384,10 @@ then.
 - **v0.1 (revision 2, Slice 2)** — added Slice 2 notes above: PersonaVault
   packaging-metadata gap and the filesystem-path bridge adopted to work
   around it without a Core change.
+- **v0.1 (revision 3, Slice 3)** — added Slice 3 notes above: the
+  verified one-session/many-intakes mapping, verified (non-)duplicate
+  behavior, two proposed-but-not-implemented additive Core changes
+  (`host_conversation_id` field; a real `source` parameter on
+  `create_returned_session`), and a documented PersonaVault Core
+  absolute-path finding in `_resolve_persona_dir`, worked around in
+  `persona_name_guard.py` for both tools.

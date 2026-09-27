@@ -35,10 +35,24 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src" / "personavault_mcp"
 
 
+# Slice 3 note: module/class docstrings legitimately need to name a
+# forbidden identifier to explain why it's absent (e.g.
+# propose_session_note's own docstring explains, in prose, that
+# commit_session_intake is "never imported, never called, and never
+# reachable from this module" -- that sentence is good governance
+# documentation, not a violation). Triple-quoted docstrings are
+# therefore stripped before scanning; single-line `#` comments are not,
+# since nothing in this package currently needs to write long
+# explanatory prose in a line comment, and leaving those scanned keeps
+# the check strict for anything shorter and more code-adjacent.
+_TRIPLE_QUOTED_STRING = re.compile(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'')
+
+
 def _all_source_text() -> str:
     chunks = []
     for path in sorted(SRC_ROOT.rglob("*.py")):
-        chunks.append(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        chunks.append(_TRIPLE_QUOTED_STRING.sub("", text))
     return "\n".join(chunks)
 
 

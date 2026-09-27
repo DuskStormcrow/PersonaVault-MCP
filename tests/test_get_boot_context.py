@@ -114,12 +114,21 @@ def test_malformed_input_returns_malformed_request(vault_factory, raw_input) -> 
         "Active/../../Archive/Someone",
     ],
 )
-def test_path_like_persona_value_is_treated_as_a_name_not_a_path(vault_factory, path_like_value) -> None:
-    """A path-shaped string in the only accepted field ('persona') is
-    just a name that fails to match -- never a traversal into the
-    filesystem."""
+def test_path_like_persona_value_is_rejected_before_reaching_personavault(vault_factory, path_like_value) -> None:
+    """Discovered during Slice 3 and hardened here too (a shared
+    infrastructure defect, not Slice-2-specific): PersonaVault Core's own
+    Vault._resolve_persona_dir joins name_or_folder onto a base directory
+    with plain Path.__truediv__, which pathlib treats as a full
+    replacement when name_or_folder is absolute -- so persona="/etc/passwd"
+    previously reached real PersonaVault code as though it were a
+    resolved directory. This tool now rejects any path-shaped persona
+    value at the door, before PersonaVault ever sees it, via
+    persona_name_guard.assert_persona_name_is_safe -- proven here as
+    MALFORMED_REQUEST, not merely "not found." See
+    persona_name_guard.py and the Slice 3 report for the full finding
+    and the proposed (not-yet-implemented) PersonaVault Core fix."""
     _vault, config = vault_factory()
-    with pytest.raises(PersonaNotFoundError):
+    with pytest.raises(MalformedRequestError):
         handle({"persona": path_like_value}, config=config)
 
 

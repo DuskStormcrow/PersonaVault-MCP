@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import AdapterConfig
+from ..persona_name_guard import UnsafePersonaNameError, assert_persona_name_is_safe
 from ..personavault_bridge import (
     PersonaVaultSourceNotFoundError,
     ensure_personavault_importable,
@@ -113,6 +114,10 @@ def _validate_input(raw_input: Any) -> str:
     persona = raw_input.get("persona")
     if not isinstance(persona, str) or not persona.strip():
         raise MalformedRequestError("'persona' is required and must be a non-empty string.")
+    try:
+        assert_persona_name_is_safe(persona)
+    except UnsafePersonaNameError as exc:
+        raise MalformedRequestError(str(exc)) from exc
     return persona
 
 
