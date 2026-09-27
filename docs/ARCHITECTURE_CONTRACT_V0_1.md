@@ -1,0 +1,240 @@
+# PersonaVault MCP Adapter — Architecture Contract v0.1 (corrected)
+
+Status: approved with two corrections (this revision). Slice 1 (adapter
+skeleton + capability-boundary tests) authorized and implemented against
+this corrected contract.
+
+This document supersedes the original v0.1 draft. Two corrections are
+applied inline below, at the sections they affect, rather than kept as a
+separate errata list — so the contract reads correctly on its own from
+this point forward. A short changelog is kept at the end for traceability.
+
+---
+
+## 1. Architectural boundary
+
+```
+PersonaVault Core (personavault/*)
+   - owns identity, Corelog, Session Return lifecycle, Host Trips, cartridges
+   - zero network code today
+   - stays exactly this way
+
+        │  in-process Python calls only (Vault(root) as a library import)
+        ▼
+
+PersonaVault MCP Adapter  ← sibling, separate process & repo
+   - the only thing that imports personavault as a dependency
+   - the only thing that speaks MCP / Streamable HTTP
+   - exposes exactly two tools (§2) and nothing else reachable through
+     its designed and tested surface
+
+        │  MCP protocol (Streamable HTTP, spec 2025-11-25+)
+        ▼
+
+Hosts (Alexa+ simulated client today; Claude/ChatGPT/Codex/local models later)
+```
+
+PersonaVault remains canonical for identity, approved continuity,
+Corelog/Chronicle records, human-reviewed changes, Host Trip/Session
+Return lifecycle, provenance, and governance. The adapter is only a
+controlled access door — it holds no canonical data of its own.
+
+### Correction 1 — what this boundary does and does not guarantee
+
+The original draft stated that even a fully compromised adapter process
+could reach nothing beyond the small set of PersonaVault methods it
+imports. **That claim is too strong and is withdrawn.**
+
+**What the v0.1 design DOES guarantee:**
+The adapter's *designed and tested* MCP capability surface — its tool
+registry, its input/output schemas, and its own source — exposes only
+the explicitly approved PersonaVault operations. Static imports,
+dispatch tables, schemas, and the tests in `tests/` prevent *accidental*
+capability creep during normal development: a developer cannot casually
+add a call to `commit_session_intake` without an explicit test failing
+and a deliberate contract amendment.
+
+**What it DOES NOT guarantee:**
+This is not an operating-system or process-level sandbox. If the full
+`personavault` package is installed and importable inside the adapter's
+Python environment (which it will be, starting the slice that
+implements `get_boot_context`), a **fully compromised** adapter process
+— one already running arbitrary attacker-controlled code, for whatever
+reason — could call `importlib.import_module("personavault.storage")`
+and reach anything in it, regardless of what the adapter's own source
+was ever written to import. The import-boundary tests are
+**architecture/governance tests**: they prove intent and catch
+accidental drift during ordinary development and review. They are not
+proof of hostile-process containment, and this document must never be
+read as claiming otherwise.
+
+**If stronger isolation is ever required**, that is a separate security
+design, out of scope for v0.1, and could look like:
+- a narrow local IPC boundary between two processes, where the callable
+  surface is enforced by what the IPC channel itself carries, not by
+  what's importable in the calling process;
+- a separately constrained PersonaVault service process exposing only a
+  minimal RPC surface, run under a different OS user/permission set than
+  the adapter;
+- OS/process sandboxing (containers, seccomp, restricted service
+  accounts);
+- or another real isolation mechanism with its own threat model.
+
+None of this is needed for Slice 1, which carries no dependency on
+`personavault` at all yet (§ Slice 1 notes, below) — the distinction
+above becomes materially relevant starting the slice that adds that
+dependency, and should be re-read in full before that slice begins.
+
+---
+
+## 2. Initial tool surface
+
+*(Unchanged from the approved draft except for Correction 2, applied to
+the provenance-related field below. Full tool contracts — input/output
+schemas, error states, persona selection behavior — are retained as
+previously approved and are not re-implemented in Slice 1.)*
+
+### Tool A — `get_boot_context`
+Wraps `Vault.boot_package_preview()` verbatim; returns a bounded subset;
+the 5-approved-event limit stays intact; never returns raw Corelog,
+checksum, or asset-status fields.
+
+### Tool B — `propose_session_note`
+Wraps `create_returned_session()` → `save_session_intake()`; never calls
+`commit_session_intake`; never exposes a `decision` field in its input
+schema, so every proposal lands as `defer` regardless of what a host
+requests.
+
+**Input schema** (corrected):
+```json
+{
+  "persona": "string, required",
+  "host_id": "string, required — host-neutral identifier the caller declares itself as",
+  "host_conversation_id": "string, required — the host's own conversation/session identifier, opaque to PersonaVault",
+  "category": "enum, required — one of memory | project_update | relationship_development | development_signal | recognition_fidelity_note | session_only_note",
+  "text": "string, required",
+  "source_excerpt": "string, optional"
+}
+```
+This was already correctly modeled as a distinct field at the MCP tool
+boundary in the original draft. Correction 2 (below) fixes where this
+value goes *inside PersonaVault's own storage*, which the original draft
+got wrong.
+
+---
+
+## 3. Explicitly inaccessible PersonaVault capabilities (deny-by-design)
+
+Unchanged list (commit, persona update, Foundation amendment, direct
+Corelog append, correction/void, cartridge import/export, persona
+lifecycle, host profile modification, Library root changes, direct file
+access, Chronicle/Recall, Stage Three/autonomous behavior) — see the
+previously approved table for the full mapping of capability → why it's
+absent.
+
+**Correction 1 applies here too.** Read "how tests can prove these
+methods are unreachable" as: *tests prove these methods are not part of
+the adapter's own designed call surface*, not as *tests prove a
+compromised process cannot reach them by any means*. The three-level
+test strategy (static import test, attribute-absence test, behavioral
+smuggling test) is retained exactly as designed — it is good, real,
+valuable engineering — just not over-claimed as containment.
+
+---
+
+## 4. Provenance contract
+
+### Correction 2 — `host_conversation_id` is its own field, not an overload of `host_model`
+
+The original draft recommended repurposing the PersonaVault session
+record's existing `host_model` field to carry the host's conversation
+identifier. **This is withdrawn.** `host_model` means "which model the
+host is running" (e.g. `"nova-3"`, `"claude-opus-5"`) and must keep
+meaning exactly that. A conversation/session identifier is a different
+concept and deserves its own, explicitly named field — provenance must
+stay interpretable years later without requiring knowledge of a
+temporary convention that happened to reuse an unrelated field.
+
+**Recommendation**: add one new, explicitly named field,
+`host_conversation_id`, to the `session_return.v0.1` session record
+schema (alongside the existing `host_platform`/`host_model`/
+`source_artifact` fields), as an additive, optional field — old readers
+that don't know about it can simply ignore it, consistent with
+PersonaVault's own existing migration doctrine of additive, non-breaking
+schema growth.
+
+**This is a PersonaVault Core change, not an adapter-only change.** It
+is explicitly **not part of Slice 1** (Slice 1 has no PersonaVault
+dependency at all) and not part of the tool implementation slices either
+— it belongs to the provenance-wiring slice (see Implementation Slices,
+step 4), and should be raised to Stormcrow/Nyx as its own small, reviewed
+PersonaVault Core change *before* that slice writes any adapter code
+that depends on it. This is the one place in the whole adapter design
+that touches PersonaVault Core, and it should be treated with the same
+weight as any other PersonaVault Core schema change — not smuggled in as
+an adapter implementation detail.
+
+**Restated, corrected provenance mapping:**
+
+| Question | Answered by |
+|---|---|
+| Which host proposed this? | `host_platform` = adapter-supplied `host_id` (host-neutral) |
+| Which model is the host running? | `host_model`, meaning only that, unchanged |
+| Which host conversation/session did it come from? | **new field**: `host_conversation_id` (session-record level; requires the PersonaVault Core change above) |
+| Which adapter version handled it? | `candidate["created_by"]` = `"personavault-mcp-adapter/<semver>"` |
+| Which MCP tool produced it? | `source_artifact`, e.g. `"mcp:propose_session_note"` |
+| When was it received? | `created_at` (already automatic) |
+| Was it synthetic/demo data? | config-level guarantee: the demo adapter instance points at a dedicated demo vault root, never the real one — not a data flag |
+| Was it approved/rejected/deferred/session-only? | native `decision` field + `commit_session_intake`'s own event types |
+| Did a human perform the canonical commit? | provable by capability absence (§3), not by a field |
+
+Everything else in the provenance contract (the optional `source`
+enum-value extension to `"mcp_proposal"`) is unchanged from the
+originally approved draft.
+
+---
+
+## 5–14
+
+Unchanged from the originally approved draft (transport contract,
+authentication boundary, synthetic demo persona, simulated Alexa+
+boundary, error semantics, security/privacy tests, repository/package
+layout, versioning, future extension points, roadmap discipline). Not
+reproduced again here to avoid drift between two copies of the same
+text; this document and the previously approved chat record together
+constitute the full contract. If a future revision needs to touch any of
+§5–14, it should be folded into this file directly, the same way these
+two corrections were.
+
+---
+
+## Slice 1 notes (this revision)
+
+Slice 1 (adapter skeleton + capability-boundary tests) was implemented
+against this corrected contract with the following properties:
+
+- Zero dependency on the `personavault` package — deliberately, so that
+  the "does not guarantee hostile-process containment" caveat in
+  Correction 1 is moot in practice for this slice: there is nothing
+  installed in this process for a compromised instance to reach.
+- The tool registry (`personavault_mcp.registry.TOOL_REGISTRY`) is
+  empty. `APPROVED_TOOL_NAMES` reserves `get_boot_context` and
+  `propose_session_note` as the only names any future registration may
+  use.
+- No transport, no networking, no authentication is wired up. A config
+  skeleton (`personavault_mcp.config.AdapterConfig`) exists with
+  loopback-only defaults, unused by anything yet.
+- No Alexa/Amazon terminology appears anywhere in
+  `src/personavault_mcp` (enforced by test); this document is the
+  appropriate place for that context, not the package.
+
+---
+
+## Changelog
+
+- **v0.1 (original)** — approved with two corrections requested.
+- **v0.1 (this revision)** — Correction 1 (import discipline is not a
+  process sandbox) applied to §1 and §3. Correction 2 (`host_conversation_id`
+  as its own field, not an overload of `host_model`) applied to §2 and
+  §4, with the required PersonaVault Core schema change flagged as a
+  pre-requisite for the provenance-wiring slice, not folded into Slice 1.
