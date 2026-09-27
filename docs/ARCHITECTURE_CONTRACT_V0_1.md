@@ -429,6 +429,81 @@ unimported, no input field can produce an approval, and every
 `get_boot_context` guarantee is untouched (that file was not modified
 this slice). Tool count remains exactly two.
 
+## Slice 5 notes
+
+Slice 5 turned the adapter from a tested library into an actual, locally
+reachable MCP service, without changing anything about §1-§4's boundary.
+
+**MCP library**: the official `mcp` Python SDK, pinned `mcp>=1.30.0,<2`.
+Checked directly against the installed package (not assumed): 1.30.0's
+`mcp.types.LATEST_PROTOCOL_VERSION` is exactly `"2025-11-25"` — this
+project's target spec level, an exact match rather than "later,
+presumably compatible" (the 2.x line's `LATEST_PROTOCOL_VERSION` is a
+later date, `2026-07-28`). 1.x also keeps the classic `FastMCP` name and,
+critically, the low-level `Server.list_tools()`/`Server.call_tool()`
+decorator API — verified that mcp 2.x's high-level `MCPServer.add_tool`
+has no parameter anywhere to supply an explicit JSON schema; it only
+infers one from a Python function's type hints, which risked silently
+diverging from this adapter's hand-built, strict schemas
+(`additionalProperties: false`, enums sourced from PersonaVault's own
+constants). `server.py` uses `FastMCP` only for its tested Streamable
+HTTP serving machinery, and registers tools via its underlying low-level
+`Server` (`app._mcp_server`) with our own verbatim schemas — verified
+that a fresh `FastMCP` instance advertises zero tools/resources/prompts
+until something is explicitly added, so nothing from the framework is
+exposed outside our own registry.
+
+**Streamable HTTP**: implemented via `FastMCP.run(transport="streamable-http")`
+(and, for tests, `FastMCP.streamable_http_app()` served under a real
+`uvicorn.Server`). Confirmed working end to end against a real `mcp`
+client, including protocol version negotiation logging
+`Negotiated protocol version: 2025-11-25` in the manual smoke test.
+
+**Bind policy**: `config.LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}`;
+`assert_bind_policy_is_safe` rejects `build_app`/startup outright for
+any other `bind_host`, including `"0.0.0.0"` — option 1 from the
+authorization ("reject startup entirely"), not a token-auth mode. No
+authentication is implemented or required for this loopback-only
+default; the enforced bind policy is what makes that acceptable, not an
+assumption. A future, separately authorized slice would need to add its
+own explicit non-loopback + auth mode; this one refuses to start rather
+than permit it.
+
+**Tool exposure**: `list_tools()`/`call_tool()` dispatch entirely
+through the existing `registry.TOOL_REGISTRY` (populated by
+`bootstrap.register_default_tools()`), never duplicating tool logic in
+the transport layer. Every adapter error (`BootContextError`,
+`ProposeSessionNoteError` subclasses) is converted to a
+`CallToolResult(isError=True, content=[TextContent(f"{code}: {message}")])`
+via one function (`_error_result`); a truly unexpected exception is
+caught separately and never has its own message exposed to the client.
+`jsonschema.validate` (via `call_tool(validate_input=True)`) enforces
+our exact schema at the transport boundary before a handler ever runs,
+verified directly by reading the installed library's source — a real
+additional layer, not a claim.
+
+**Logging**: `personavault_mcp.server`'s own logger records only tool
+names, success/failure codes, and start/stop — verified directly (not
+assumed) that neither proposal text nor boot-context contents ever
+appear in it, via an integration test that captures real log output
+during a real call. The `mcp` client SDK's own debug logging (a
+different, caller-side concern) does log its own outgoing payloads at
+DEBUG level; that is the caller's own trace of what it sent, not
+something a server-side deployment would see or that this adapter
+controls.
+
+**No health endpoint added.** Optional per the authorization; skipped to
+keep the surface minimal. Nothing prevents adding a plain Starlette
+route returning `{"status": "ok"}` later without difficulty.
+
+**Known limitations carried forward, unchanged by this slice**: the
+Slice 4 correlation-cache limitation (no durable rediscovery of a host
+conversation's session after an adapter restart) is unaffected — this
+slice is transport, not correlation. Non-loopback/remote operation,
+real authentication beyond "none, because it can't reach anything but
+loopback," and any demo/simulator client remain for later, separately
+authorized work.
+
 ## Changelog
 
 - **v0.1 (original)** — approved with two corrections requested.
@@ -456,3 +531,9 @@ this slice). Tool count remains exactly two.
   and is recommended, not implemented, as a small future read-only
   method. The absolute-path finding is fixed at the Core level too;
   `persona_name_guard.py` remains as intentional defense-in-depth.
+- **v0.1 (revision 5, Slice 5)** — added Slice 5 notes above: real
+  Streamable HTTP transport (`mcp>=1.30.0,<2`, spec `2025-11-25` exact
+  match), loopback-only bind policy enforced at startup, no auth for
+  that loopback-only mode, tool exposure dispatched through the
+  existing registry with unmodified schemas, and verified log-content
+  safety. `PersonaVault-MCP` is now a runnable local MCP service.

@@ -5,12 +5,33 @@ build-backend = "hatchling.build"
 [project]
 name = "personavault-mcp"
 version = "0.1.0"
-description = "Host-neutral MCP adapter for PersonaVault. Slice 3: two tools registered — get_boot_context (read-only) and propose_session_note (write-adjacent, proposal-only) — no transport, no auth, no third tool yet."
+description = "Host-neutral MCP adapter for PersonaVault. Slice 5: real local Streamable HTTP MCP service (loopback-only, no auth), exposing exactly get_boot_context and propose_session_note."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    # Official Model Context Protocol Python SDK, pinned to the 1.x
+    # line. See src/personavault_mcp/server.py's module docstring for
+    # the full rationale: 1.30.0's LATEST_PROTOCOL_VERSION is exactly
+    # "2025-11-25" (this project's target spec level), and the 1.x line
+    # keeps the low-level Server.list_tools()/call_tool() decorator API
+    # this adapter relies on for explicit, unmodified schema control
+    # (mcp 2.x's high-level API only supports schema inference from
+    # Python type hints, which risks silently diverging from our
+    # hand-built strict schemas). Pulls in starlette, uvicorn, httpx,
+    # sse-starlette, and jsonschema transitively -- no separate web
+    # framework was added on top.
+    "mcp>=1.30.0,<2",
+    # Used directly (not just transitively through mcp) by the smoke
+    # test and integration tests to run/tear down the ASGI app for a
+    # real HTTP round trip -- declared explicitly since our own code
+    # imports it, not left implicit as a dependency-of-a-dependency.
+    "uvicorn>=0.31.1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+
+[project.scripts]
+personavault-mcp = "personavault_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/personavault_mcp"]

@@ -186,11 +186,13 @@ def test_no_autonomous_loop_pattern(pattern: str) -> None:
     )
 
 
-# Item 10: no Amazon/Alexa terminology in the generic adapter package.
-# Deliberately scoped to src/personavault_mcp only — the design-contract
-# doc under docs/ is allowed to name real hosts (including Alexa) as
-# context; the importable package must stay host-neutral.
-@pytest.mark.parametrize("brand_token", ["alexa", "amazon"])
+# Item 10 (Slice 2) / item 17 (Slice 5): no vendor-specific terminology
+# in the generic adapter package. Deliberately scoped to
+# src/personavault_mcp only — the design-contract doc under docs/ is
+# allowed to name real hosts (including Alexa) as context; the
+# importable package must stay host/vendor-neutral. Nebius/Nemotron
+# added in Slice 5 alongside the transport work, for the same reason.
+@pytest.mark.parametrize("brand_token", ["alexa", "amazon", "nebius", "nemotron"])
 def test_no_brand_terminology_in_generic_package(brand_token: str) -> None:
     assert brand_token not in SOURCE_TEXT.lower(), (
         f"Brand-specific term {brand_token!r} found in the generic "
@@ -205,13 +207,32 @@ def _pyproject_dependencies() -> list[str]:
 
 
 # Item 11 (partial, static half): no dependency on personavault is
-# declared yet, and no scheduler-shaped dependency is declared either.
+# declared, and no scheduler-shaped dependency is declared either. Still
+# true as of Slice 5: PersonaVault is reached via the filesystem-path
+# bridge (personavault_bridge.py), never a pip dependency, regardless of
+# how many other runtime dependencies (mcp, and its own transitive web
+# stack) this slice adds.
 def test_no_personavault_dependency_declared() -> None:
     deps = " ".join(_pyproject_dependencies()).lower()
     assert "personavault" not in deps, (
-        "Slice 1 introduces no dependency on the personavault package "
-        "itself — that coupling starts in the slice that implements "
-        "get_boot_context, not this one."
+        "PersonaVault is reached via personavault_bridge.py's sys.path "
+        "mechanism, never a pip dependency — see that module's docstring."
+    )
+
+
+# Item 18 (Slice 5): no public tunnel/remote-hosting dependency added.
+# Slice 5 is local-transport-only; Cloudflare Tunnel, ngrok, Tailscale
+# Funnel, and cloud-hosting SDKs all belong to later, separately
+# authorized work, if ever.
+@pytest.mark.parametrize(
+    "forbidden_dependency",
+    ["ngrok", "cloudflared", "pyngrok", "tailscale", "boto3", "google-cloud", "azure-"],
+)
+def test_no_tunnel_or_cloud_hosting_dependency_declared(forbidden_dependency: str) -> None:
+    deps = " ".join(_pyproject_dependencies()).lower()
+    assert forbidden_dependency not in deps, (
+        f"{forbidden_dependency!r}-shaped dependency found. Public tunneling and "
+        "cloud hosting are explicitly out of scope for this slice."
     )
 
 
