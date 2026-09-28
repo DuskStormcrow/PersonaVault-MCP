@@ -7,3 +7,7 @@ venv/
 dist/
 build/
 .env
+
+# Disposable, rebuildable demo vault data (see demo/README.md) -- never
+# committed. `demo/README.md` itself is tracked normally.
+/demo/vault/

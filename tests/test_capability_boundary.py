@@ -48,15 +48,31 @@ SRC_ROOT = REPO_ROOT / "src" / "personavault_mcp"
 _TRIPLE_QUOTED_STRING = re.compile(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'')
 
 
-def _all_source_text() -> str:
+def _all_source_text(*, exclude_demo: bool = False) -> str:
     chunks = []
     for path in sorted(SRC_ROOT.rglob("*.py")):
+        if exclude_demo and path.relative_to(SRC_ROOT).parts[0] == "demo":
+            continue
         text = path.read_text(encoding="utf-8")
         chunks.append(_TRIPLE_QUOTED_STRING.sub("", text))
     return "\n".join(chunks)
 
 
 SOURCE_TEXT = _all_source_text()
+
+# Slice 6 note: personavault_mcp/demo/ is an offline, non-MCP fixture
+# builder (see its own module docstring) -- it legitimately calls
+# PersonaVault write/lifecycle methods (create_persona,
+# commit_session_intake, ...) to seed a throwaway demo vault, and is
+# never registered as a tool, never imported by server.py/registry.py/
+# tools/*.py, and never reachable from any MCP request. The two checks
+# that police the MCP-reachable adapter surface's write/mutation
+# boundary (below) are scoped to exclude it accordingly.
+# `test_demo_package_never_imported_by_mcp_surface` is the check that
+# keeps this carve-out honest: it fails if that isolation is ever
+# broken, which is what actually keeps the governance boundary intact,
+# not merely excluding demo/ from a text scan.
+ADAPTER_SURFACE_TEXT = _all_source_text(exclude_demo=True)
 
 
 # Items 1-4 and 6 from the Slice 1 test requirements, plus a few
@@ -101,7 +117,7 @@ DENIED_IDENTIFIER_TOKENS = [
 
 @pytest.mark.parametrize("token", DENIED_IDENTIFIER_TOKENS)
 def test_denied_identifier_absent_from_source(token: str) -> None:
-    assert token.lower() not in SOURCE_TEXT.lower(), (
+    assert token.lower() not in ADAPTER_SURFACE_TEXT.lower(), (
         f"Forbidden identifier {token!r} found in adapter source. This "
         "adapter must not reference PersonaVault write/mutation/Recall "
         "capabilities without a contract amendment."
@@ -125,13 +141,20 @@ def test_personavault_import_confined_to_approved_modules() -> None:
     the allowlist above MUST import personavault (proving the allowlist
     itself stays accurate, not just permissive), and every other module
     MUST NOT — proving PersonaVault coupling stays confined to the
-    reviewed surface rather than spreading through the package."""
+    reviewed surface rather than spreading through the package.
+
+    Scoped to exclude personavault_mcp/demo/ — see the ADAPTER_SURFACE_TEXT
+    note above. demo/build_demo_vault.py is its own, separately reviewed
+    PersonaVault-importing module, checked on its own terms by
+    tests/test_demo_fixture.py, not by this MCP-adapter-surface check."""
     forbidden_import_patterns = [
         r"\bimport\s+personavault\b",
         r"\bfrom\s+personavault\b",
     ]
     for path in sorted(SRC_ROOT.rglob("*.py")):
         relative = path.relative_to(SRC_ROOT).as_posix()
+        if relative.split("/")[0] == "demo":
+            continue
         text = path.read_text(encoding="utf-8")
         has_import = any(re.search(pattern, text) for pattern in forbidden_import_patterns)
         if relative in _MODULES_ALLOWED_TO_IMPORT_PERSONAVAULT:
@@ -144,6 +167,46 @@ def test_personavault_import_confined_to_approved_modules() -> None:
                 f"{relative} imports personavault but is not on the approved "
                 "allowlist — PersonaVault coupling must stay confined to "
                 "reviewed modules."
+            )
+
+
+# Slice 6: the carve-out above is only safe because nothing in the
+# actual MCP-reachable surface (the server, the tool registry, the two
+# tools, and every module they import) can ever reach the demo package.
+# This is what actually enforces that boundary -- proving demo/ is
+# structurally unreachable from a real MCP request, not just excluded
+# from a text scan.
+_MCP_SURFACE_RELATIVE_PATHS = (
+    "server.py",
+    "registry.py",
+    "bootstrap.py",
+    "config.py",
+    "schema_guard.py",
+    "persona_name_guard.py",
+    "personavault_bridge.py",
+    "session_correlation.py",
+    "server_metadata.py",
+    "tools/__init__.py",
+    "tools/get_boot_context.py",
+    "tools/propose_session_note.py",
+)
+
+
+def test_demo_package_never_imported_by_mcp_surface() -> None:
+    forbidden_import_patterns = [
+        r"\bimport\s+personavault_mcp\.demo\b",
+        r"\bfrom\s+\.\.?demo\b",
+        r"\bfrom\s+personavault_mcp\.demo\b",
+    ]
+    for relative in _MCP_SURFACE_RELATIVE_PATHS:
+        path = SRC_ROOT / relative
+        assert path.is_file(), f"expected MCP-surface module missing: {relative}"
+        text = path.read_text(encoding="utf-8")
+        for pattern in forbidden_import_patterns:
+            assert not re.search(pattern, text), (
+                f"{relative} references personavault_mcp.demo — the offline demo "
+                "fixture builder must never be reachable from the MCP-serving "
+                "surface."
             )
 
 

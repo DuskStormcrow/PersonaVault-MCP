@@ -6,10 +6,19 @@ ever used here as an imported dependency (once a later slice actually needs
 it) — this repository never modifies PersonaVault Core, and PersonaVault
 Core never depends on this repository.
 
-## Current status: Slice 5 — a real local MCP service
+## Current status: Slice 6 — a synthetic demo resident + isolated demo vault
 
-As of this slice, `PersonaVault-MCP` is an actual, runnable local MCP
-service, not just a tested library:
+Slice 6 adds `demo/` and `src/personavault_mcp/demo/`: a completely
+fictional PersonaVault resident ("Rook") and a disposable, rebuildable
+demo vault, safe for MCP smoke tests, screenshots, recordings, and
+hackathon/external review — never a real resident, never the real
+PersonaVault Library. Build it with
+`python -m personavault_mcp.demo.build_demo_vault`; see `demo/README.md`
+for the full guide. This is a fixture only — Slice 6 does not add a
+simulated host client (see the Slice 6 report for what's deferred).
+
+Everything below is unchanged from Slice 5, still the real local MCP
+service Slice 6's demo vault runs against:
 
 - Two functional MCP tools exist: `get_boot_context` (read-only) and
   `propose_session_note` (write-adjacent, proposal-only). Both are
